@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zar1"
+version = "0.1.0"
+description = "ZAR-1: Sovereign verifiable LLM (Recurrent-Depth MoE Transformer)"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.11"
+authors = [{ name = "KhayaAI" }]
+dependencies = [
+    "torch>=2.5",
+    "transformers>=4.44",
+    "datasets>=2.20",
+    "wandb>=0.17",
+    "tqdm>=4.66",
+    "einops>=0.8",
+    "pyyaml>=6.0",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.7",
+    "sentencepiece>=0.2",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "black>=24.0", "ruff>=0.5"]
+onnx = ["onnx>=1.16", "onnxruntime>=1.18"]
+eval = ["lm-eval>=0.4.3"]
+
+[project.scripts]
+zar1-train = "zar1.scripts.train_7b:main"
+zar1-serve = "zar1.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"

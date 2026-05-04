@@ -1,0 +1,59 @@
+# ZAR-1 7B training configuration
+model:
+  dim: 4096
+  n_heads: 32
+  n_kv_heads: 8
+  prelude_layers: 4
+  coda_layers: 4
+  max_loops: 8
+  num_experts: 256
+  top_k: 8
+  act_epsilon: 0.01
+  act_ponder_tau: 0.01
+  vocab_size: 128256          # extended Llama-3 tokenizer
+  max_seq_len: 8192
+  spectral_max: 0.99
+  spectral_iters: 5
+  pad_token_id: 0
+  tie_word_embeddings: true
+
+training:
+  batch_tokens: 2097152         # 2M tokens per global step
+  micro_batch_size: 1           # per-GPU
+  grad_accum_steps: 16
+  max_seq_len: 8192
+  steps: 500000
+  warmup_steps: 2000
+  lr: 3.0e-4
+  min_lr: 3.0e-5
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.95
+  eps: 1.0e-8
+  gradient_clip: 1.0
+  log_every: 10
+  eval_every: 1000
+  save_every: 1000
+  early_stop_patience: 10        # eval-checkpoints w/o val improvement
+  output_dir: "./checkpoints/zar1_7b"
+  resume_from: null
+
+data:
+  hf_dataset: "HuggingFaceFW/fineweb-edu"
+  hf_split: "train"
+  hf_streaming: true
+  african_glob: "data/african/*.jsonl"
+  tokenizer: "meta-llama/Meta-Llama-3-8B"
+  validation_fraction: 0.01
+  pack_sequences: true
+
+distributed:
+  fsdp: true
+  hybrid_shard: false           # set true for multi-node
+  bf16: true
+  activation_checkpointing: true
+
+logging:
+  wandb_project: "zar1"
+  wandb_entity: null
+  run_name: "zar1-7b"
