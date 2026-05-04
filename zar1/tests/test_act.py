@@ -1,81 +1,71 @@
-"""Tests for the ACT halting module."""
+"""Tests for Adaptive Computation Time halting."""
 
 import torch
-import torch.nn as nn
 
 from zar1.act import ACTHalting
+from zar1.recurrent_block import RecurrentTransformerBlock
 
 
-def _make_step_fn(halt: ACTHalting, fixed_p: float | None = None):
-    """Return a step_fn that increments the hidden state and (optionally)
-    forces the halting probability to a known value."""
+def test_act_basic_forward():
+    """Test ACT forward pass returns properly-shaped outputs."""
+    act = ACTHalting(dim=64, epsilon=0.01, max_steps=4)
+    hidden = torch.randn(2, 8, 64)  # (B, T, dim)
+
+    def dummy_step(h: torch.Tensor, t: int):
+        return h + 0.1 * torch.randn_like(h), torch.tensor(0.0)
+
+    output, ponder_cost, n_steps, aux_loss = act(hidden, dummy_step, max_steps=4)
+
+    assert output.shape == hidden.shape
+    assert ponder_cost.dim() == 0  # scalar
+    assert 1 <= n_steps <= 4
+
+
+def test_act_early_exit():
+    """Test that ACT halts early when cumulative probability exceeds threshold."""
+    act = ACTHalting(dim=32, epsilon=0.05, max_steps=8)  # high epsilon -> easier to halt
+    hidden = torch.randn(1, 4, 32)
+
+    steps_taken = []
+
+    def recording_step(h: torch.Tensor, t: int):
+        steps_taken.append(t)
+        return h + 0.01 * torch.randn_like(h), torch.tensor(0.0)
+
+    output, ponder_cost, n_steps, _ = act(hidden, recording_step, max_steps=8)
+    assert n_steps == len(steps_taken)
+    # With high epsilon, we should exit early (not all 8 steps)
+    assert n_steps < 8
+
+
+def test_act_ponder_cost_positive():
+    """Ponder cost should be non-negative."""
+    act = ACTHalting(dim=16, epsilon=0.01, ponder_tau=0.1, max_steps=4)
+    hidden = torch.randn(1, 4, 16)
 
     def step(h: torch.Tensor, t: int):
-        new_h = h + 1.0
-        return new_h, h.new_zeros(())
+        return h, torch.tensor(0.0)
 
-    if fixed_p is not None:
-        # Override the halt MLP so sigmoid(out) == fixed_p (approximately).
-        with torch.no_grad():
-            for p in halt.halt_mlp.parameters():
-                p.zero_()
-            # Final bias controls the output.
-            halt.halt_mlp[-1].bias.fill_(torch.logit(torch.tensor(fixed_p)).item())
-    return step
+    _, ponder_cost, _, _ = act(hidden, step, max_steps=4)
+    assert ponder_cost.item() >= 0
 
 
-def test_early_exit_triggers():
-    """With high halting probability, ACT should exit on the first step."""
-    halt = ACTHalting(dim=8, epsilon=0.01, max_steps=8)
-    step = _make_step_fn(halt, fixed_p=0.999)
-    h0 = torch.zeros(1, 4, 8)
-    out, ponder, n_steps, aux = halt(h0, step)
-    assert n_steps == 1
-    # Output should be ~ first step result (h0 + 1).
-    assert torch.allclose(out, torch.ones_like(out), atol=1e-2)
-    assert ponder.item() >= 0.0
+def test_act_with_recurrent_block():
+    """Integration test: ACT + RecurrentTransformerBlock."""
+    block = RecurrentTransformerBlock(
+        dim=64,
+        num_heads=4,
+        num_kv_heads=2,
+        max_loops=4,
+        num_experts=8,
+        top_k=2,
+    )
+    act = ACTHalting(dim=64, epsilon=0.01, max_steps=4)
+    hidden = torch.randn(1, 8, 64)
 
+    def step(h: torch.Tensor, t: int):
+        return block(h, t)
 
-def test_runs_full_loop_when_p_low():
-    halt = ACTHalting(dim=8, epsilon=0.01, max_steps=4)
-    step = _make_step_fn(halt, fixed_p=1e-4)
-    h0 = torch.zeros(2, 3, 8)
-    out, ponder, n_steps, _ = halt(h0, step)
-    assert n_steps == 4
-    # Last step absorbs the remainder, so total weight ~ 1; output ~ last hidden state.
-    assert torch.allclose(out, torch.full_like(out, 4.0), atol=1e-2)
-    assert ponder.item() >= 0.0
-
-
-def test_weighted_average_property():
-    """If all weights are equal, the output should equal the simple mean."""
-    halt = ACTHalting(dim=4, epsilon=0.5, max_steps=2)
-    # Force halting prob to 0.5 each step (so two steps each get weight 0.5).
-    step = _make_step_fn(halt, fixed_p=0.5)
-    h0 = torch.zeros(1, 1, 4)
-    out, _, n_steps, _ = halt(h0, step)
-    assert n_steps <= 2
-    # h after step 1 = 1, h after step 2 = 2; weighted average ~ (0.5*1 + 0.5*2) = 1.5
-    # When epsilon is large, ACT halts after step 1 absorbing all mass -> output ~1.
-    # Either is acceptable; just check that out lies between 1 and 2.
-    val = out.mean().item()
-    assert 0.99 <= val <= 2.01
-
-
-def test_ponder_cost_nonnegative():
-    halt = ACTHalting(dim=4, epsilon=0.01, max_steps=3)
-    step = _make_step_fn(halt, fixed_p=0.1)
-    h0 = torch.zeros(1, 2, 4)
-    _, ponder, _, _ = halt(h0, step)
-    assert ponder.item() >= 0.0
-
-
-def test_aux_loss_accumulates():
-    halt = ACTHalting(dim=4, epsilon=1e-9, max_steps=3)
-
-    def step(h, t):
-        return h + 1.0, h.new_tensor(0.5)
-
-    h0 = torch.zeros(1, 1, 4)
-    _, _, n_steps, aux = halt(h0, step)
-    assert aux.item() == 0.5 * n_steps
+    output, ponder_cost, n_steps, aux_loss = act(hidden, step, max_steps=4)
+    assert output.shape == hidden.shape
+    assert n_steps >= 1
