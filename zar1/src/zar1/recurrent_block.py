@@ -1,10 +1,10 @@
 """Recurrent transformer block with GQA, RoPE, MoE, loop-index embeddings,
-and a power-iteration spectral-radius constraint on the recurrent injection.
+LoRA depth adapters, and a power-iteration spectral-radius constraint on the
+recurrent injection.
 
-The block is intended to be applied repeatedly with weight tying. A learnable
-loop-index embedding (one vector per loop step) is added to the hidden state
-before each iteration so the same weights can specialize their behavior across
-recurrence depth.
+The block is intended to be applied repeatedly with weight tying. Each loop
+gets a unique loop-index embedding plus its own LoRA adapter so the same weights
+can specialize their behavior across recurrence depth.
 """
 
 from __future__ import annotations
@@ -16,6 +16,43 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from zar1.moe import MoEFeedForward
+
+
+class LoRAAdapter(nn.Module):
+    """Low-rank adapter (LoRA) for per-loop expressiveness.
+
+    Implements y = x + (B @ A @ x) * (alpha / rank), where A and B are
+    low-rank decomposition matrices. ``A`` is initialized to a small random
+    value, ``B`` to zero, so the adapter starts as identity.
+
+    Args:
+        dim: Input/output dimension.
+        rank: LoRA rank (typically 8-32). Master Plan v2.0 specifies rank 16.
+        alpha: Scaling factor (typically equal to rank).
+        dropout: Optional dropout on the LoRA path.
+    """
+
+    def __init__(self, dim: int, rank: int = 16, alpha: float | None = None, dropout: float = 0.0) -> None:
+        super().__init__()
+        self.dim = dim
+        self.rank = rank
+        self.alpha = alpha if alpha is not None else float(rank)
+        self.scaling = self.alpha / max(rank, 1)
+
+        self.lora_A = nn.Linear(dim, rank, bias=False)
+        self.lora_B = nn.Linear(rank, dim, bias=False)
+        self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
+
+        # Standard LoRA init: A ~ Kaiming, B = 0 so adapter starts at zero.
+        nn.init.kaiming_uniform_(self.lora_A.weight, a=math.sqrt(5))
+        nn.init.zeros_(self.lora_B.weight)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Compute the LoRA delta: ``B(A(x)) * scaling``.
+
+        The caller is responsible for adding this to the base output.
+        """
+        return self.lora_B(self.dropout(self.lora_A(x))) * self.scaling
 
 
 class RMSNorm(nn.Module):
@@ -199,12 +236,16 @@ class RecurrentTransformerBlock(nn.Module):
         max_seq_len: int = 8192,
         spectral_max: float = 0.99,
         spectral_iters: int = 5,
+        lora_rank: int = 16,
+        use_lora: bool = True,
     ) -> None:
         super().__init__()
         self.dim = dim
         self.max_loops = max_loops
         self.spectral_max = spectral_max
         self.spectral_iters = spectral_iters
+        self.use_lora = use_lora
+        self.lora_rank = lora_rank
 
         self.norm1 = RMSNorm(dim)
         self.attn = GroupedQueryAttention(dim, num_heads, num_kv_heads, max_seq_len)
@@ -218,6 +259,20 @@ class RecurrentTransformerBlock(nn.Module):
         # Recurrent injection: blends previous-loop hidden with current input.
         self.recurrent_proj = nn.Linear(dim, dim, bias=False)
         nn.init.normal_(self.recurrent_proj.weight, mean=0.0, std=1.0 / math.sqrt(dim))
+
+        # Per-loop LoRA depth adapters (Master Plan v2.0 §2.1).
+        # One LoRA pair per loop, applied to attention output and FFN output.
+        # Adds (max_loops * 2 * 2 * rank * dim) params: ~2M for 7B at rank 16.
+        if use_lora:
+            self.attn_loras = nn.ModuleList(
+                [LoRAAdapter(dim, rank=lora_rank) for _ in range(max_loops)]
+            )
+            self.ffn_loras = nn.ModuleList(
+                [LoRAAdapter(dim, rank=lora_rank) for _ in range(max_loops)]
+            )
+        else:
+            self.attn_loras = None
+            self.ffn_loras = None
 
         # Cached left singular vector for power iteration (not a parameter).
         self.register_buffer(
@@ -259,7 +314,17 @@ class RecurrentTransformerBlock(nn.Module):
         # Recurrent injection + loop-index conditioning.
         h = self.recurrent_proj(x) + loop_emb.view(1, 1, -1)
 
-        h = h + self.attn(self.norm1(h), attention_mask)
-        ffn_out, _routing, aux_loss = self.moe(self.norm2(h))
+        # Attention sublayer with per-loop LoRA adapter.
+        attn_in = self.norm1(h)
+        attn_out = self.attn(attn_in, attention_mask)
+        if self.use_lora:
+            attn_out = attn_out + self.attn_loras[idx](attn_in)
+        h = h + attn_out
+
+        # MoE FFN sublayer with per-loop LoRA adapter.
+        ffn_in = self.norm2(h)
+        ffn_out, _routing, aux_loss = self.moe(ffn_in)
+        if self.use_lora:
+            ffn_out = ffn_out + self.ffn_loras[idx](ffn_in)
         h = h + ffn_out
         return h, aux_loss

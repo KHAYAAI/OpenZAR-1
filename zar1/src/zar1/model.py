@@ -43,6 +43,8 @@ class ZAR1Config:
     act_ponder_tau: float = 0.01
     spectral_max: float = 0.99
     spectral_iters: int = 5
+    lora_rank: int = 16
+    use_lora: bool = True
     tie_word_embeddings: bool = True
     pad_token_id: int = 0
     extras: dict = field(default_factory=dict)
@@ -67,6 +69,12 @@ class ZAR1Config:
             max_seq_len=m.get("max_seq_len", 8192),
             act_epsilon=m.get("act_epsilon", 0.01),
             act_ponder_tau=m.get("act_ponder_tau", 0.01),
+            lora_rank=m.get("lora_rank", 16),
+            use_lora=m.get("use_lora", True),
+            spectral_max=m.get("spectral_max", 0.99),
+            spectral_iters=m.get("spectral_iters", 5),
+            tie_word_embeddings=m.get("tie_word_embeddings", True),
+            pad_token_id=m.get("pad_token_id", 0),
             extras=cfg,
         )
 
@@ -113,6 +121,8 @@ class ZAR1Model(nn.Module):
             max_seq_len=config.max_seq_len,
             spectral_max=config.spectral_max,
             spectral_iters=config.spectral_iters,
+            lora_rank=config.lora_rank,
+            use_lora=config.use_lora,
         )
 
         self.act = ACTHalting(

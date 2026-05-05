@@ -14,6 +14,8 @@ model:
   max_seq_len: 8192
   spectral_max: 0.99
   spectral_iters: 5
+  lora_rank: 16                  # LoRA depth adapter rank (Master Plan v2.0 §2.1)
+  use_lora: true                 # Enable per-loop LoRA adapters
   pad_token_id: 0
   tie_word_embeddings: true
 

@@ -1,0 +1,64 @@
+# ZAR-1 1B smoke test configuration (Master Plan v2.0 Month 1 gate)
+# Used for validating training stability before committing 7B compute.
+# Smaller dimensions, fewer experts, fewer loops -> fits on a single 8-GPU node.
+
+model:
+  dim: 768                       # 1/5x of 7B
+  n_heads: 12
+  n_kv_heads: 4
+  prelude_layers: 2
+  coda_layers: 2
+  max_loops: 4
+  num_experts: 32                # 1/8x of 7B (still validates MoE routing)
+  top_k: 4
+  act_epsilon: 0.01
+  act_ponder_tau: 0.01
+  vocab_size: 128256             # same Llama-3 tokenizer
+  max_seq_len: 2048              # shorter context for faster iteration
+  spectral_max: 0.99
+  spectral_iters: 5
+  lora_rank: 16
+  use_lora: true
+  pad_token_id: 0
+  tie_word_embeddings: true
+
+training:
+  batch_tokens: 131072           # 128k tokens per global step (small)
+  micro_batch_size: 2
+  grad_accum_steps: 4
+  max_seq_len: 2048
+  steps: 100                     # short smoke test
+  warmup_steps: 10
+  lr: 3.0e-4
+  min_lr: 3.0e-5
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.95
+  eps: 1.0e-8
+  gradient_clip: 1.0
+  log_every: 5
+  eval_every: 50
+  save_every: 50
+  early_stop_patience: 100
+  output_dir: "./checkpoints/zar1_1b_smoke"
+  resume_from: null
+
+data:
+  hf_dataset: "HuggingFaceFW/fineweb-edu"
+  hf_split: "train"
+  hf_streaming: true
+  african_glob: ""               # disabled for smoke test
+  tokenizer: "meta-llama/Meta-Llama-3-8B"
+  validation_fraction: 0.01
+  pack_sequences: true
+
+distributed:
+  fsdp: false                    # single-GPU smoke test
+  hybrid_shard: false
+  bf16: true
+  activation_checkpointing: false
+
+logging:
+  wandb_project: "zar1-smoke-test"
+  wandb_entity: null
+  run_name: "zar1-1b-smoke"

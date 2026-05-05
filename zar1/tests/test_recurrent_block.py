@@ -2,7 +2,7 @@
 
 import torch
 
-from zar1.recurrent_block import RecurrentTransformerBlock
+from zar1.recurrent_block import LoRAAdapter, RecurrentTransformerBlock
 
 
 def test_recurrent_block_shape():
@@ -74,3 +74,64 @@ def test_attention_mask():
 
     # Results should differ (though not drastically)
     assert h1.shape == h2.shape
+
+
+def test_lora_adapter_starts_at_zero():
+    """LoRA adapter must start as identity (B initialized to 0)."""
+    lora = LoRAAdapter(dim=32, rank=8)
+    x = torch.randn(2, 4, 32)
+    delta = lora(x)
+    assert delta.shape == x.shape
+    # B is zero-initialized, so output must be exactly zero.
+    assert torch.allclose(delta, torch.zeros_like(delta))
+
+
+def test_lora_adapter_trains():
+    """LoRA adapter should produce non-zero output after a gradient step."""
+    lora = LoRAAdapter(dim=16, rank=4)
+    x = torch.randn(1, 4, 16, requires_grad=True)
+    target = torch.randn_like(x)
+
+    optim = torch.optim.SGD(lora.parameters(), lr=0.1)
+    for _ in range(10):
+        optim.zero_grad()
+        out = lora(x)
+        loss = ((out - target) ** 2).mean()
+        loss.backward()
+        optim.step()
+
+    delta = lora(x)
+    assert not torch.allclose(delta, torch.zeros_like(delta), atol=1e-6)
+
+
+def test_recurrent_block_lora_per_loop_distinct():
+    """Different loop indices must use different LoRA adapters."""
+    torch.manual_seed(0)
+    block = RecurrentTransformerBlock(
+        dim=32, num_heads=2, num_kv_heads=1, max_loops=4, lora_rank=8, use_lora=True
+    )
+    # Manually push different non-zero values into different LoRA Bs.
+    with torch.no_grad():
+        for i, lora in enumerate(block.attn_loras):
+            lora.lora_B.weight.fill_(0.01 * (i + 1))
+
+    x = torch.randn(1, 4, 32)
+    with torch.no_grad():
+        h0, _ = block(x, loop_index=0)
+        h1, _ = block(x, loop_index=1)
+        h3, _ = block(x, loop_index=3)
+
+    assert not torch.allclose(h0, h1, atol=1e-5)
+    assert not torch.allclose(h1, h3, atol=1e-5)
+
+
+def test_recurrent_block_lora_disabled():
+    """When use_lora=False, the block should produce output without LoRA paths."""
+    block = RecurrentTransformerBlock(
+        dim=32, num_heads=2, num_kv_heads=1, max_loops=4, use_lora=False
+    )
+    assert block.attn_loras is None
+    assert block.ffn_loras is None
+    x = torch.randn(1, 4, 32)
+    h, _ = block(x, loop_index=0)
+    assert h.shape == x.shape
