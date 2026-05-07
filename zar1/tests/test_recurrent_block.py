@@ -2,6 +2,7 @@
 
 import torch
 
+from zar1.moe import MLPRouter, PIDBalancer
 from zar1.recurrent_block import LoRAAdapter, RecurrentTransformerBlock
 
 
@@ -134,4 +135,74 @@ def test_recurrent_block_lora_disabled():
     assert block.ffn_loras is None
     x = torch.randn(1, 4, 32)
     h, _ = block(x, loop_index=0)
+    assert h.shape == x.shape
+
+
+def test_mlp_router_shape():
+    """Test MLP router outputs correct shape."""
+    router = MLPRouter(dim=64, num_experts=256)
+    x = torch.randn(100, 64)
+    logits = router(x)
+    assert logits.shape == (100, 256)
+
+
+def test_pid_balancer_initialization():
+    """Test PID balancer initializes with correct state."""
+    balancer = PIDBalancer(num_experts=32, kp=0.5, ki=0.1, kd=0.1)
+    assert balancer.ema_load.shape == (32,)
+    assert balancer.integral_error.shape == (32,)
+    assert balancer.prev_error.shape == (32,)
+    # EMA load should be uniform initially
+    assert torch.allclose(balancer.ema_load, torch.ones(32) / 32)
+
+
+def test_pid_balancer_updates_load():
+    """Test PID balancer tracks expert load over time."""
+    balancer = PIDBalancer(num_experts=8)
+    routing_probs = torch.softmax(torch.randn(64, 8), dim=-1)
+    top1 = torch.argmax(routing_probs, dim=-1)
+
+    # Run PID multiple times; load should evolve
+    biases = []
+    for _ in range(3):
+        bias = balancer(routing_probs, top1)
+        biases.append(bias.clone())
+
+    # Biases should change as EMA load updates
+    assert not torch.allclose(biases[0], biases[1], atol=1e-5)
+
+
+def test_recurrent_block_with_pid():
+    """Test recurrent block with PID-based load balancing enabled."""
+    block = RecurrentTransformerBlock(
+        dim=32,
+        num_heads=2,
+        num_kv_heads=1,
+        max_loops=4,
+        num_experts=16,
+        top_k=4,
+        use_pid=True,
+    )
+    block.train()  # PID only applies in training
+    x = torch.randn(1, 8, 32)
+    h, aux_loss = block(x, loop_index=0)
+    assert h.shape == x.shape
+    assert aux_loss.dim() == 0
+    assert not torch.isnan(aux_loss)
+
+
+def test_recurrent_block_pid_disabled():
+    """Test recurrent block with PID-based load balancing disabled."""
+    block = RecurrentTransformerBlock(
+        dim=32,
+        num_heads=2,
+        num_kv_heads=1,
+        max_loops=4,
+        num_experts=16,
+        top_k=4,
+        use_pid=False,
+    )
+    assert block.moe.pid is None
+    x = torch.randn(1, 8, 32)
+    h, aux_loss = block(x, loop_index=0)
     assert h.shape == x.shape

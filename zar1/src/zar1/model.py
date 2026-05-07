@@ -45,6 +45,11 @@ class ZAR1Config:
     spectral_iters: int = 5
     lora_rank: int = 16
     use_lora: bool = True
+    use_pid: bool = True
+    pid_kp: float = 0.5
+    pid_ki: float = 0.1
+    pid_kd: float = 0.1
+    router_hidden_dim: int | None = None
     tie_word_embeddings: bool = True
     pad_token_id: int = 0
     extras: dict = field(default_factory=dict)
@@ -71,6 +76,11 @@ class ZAR1Config:
             act_ponder_tau=m.get("act_ponder_tau", 0.01),
             lora_rank=m.get("lora_rank", 16),
             use_lora=m.get("use_lora", True),
+            use_pid=m.get("use_pid", True),
+            pid_kp=m.get("pid_kp", 0.5),
+            pid_ki=m.get("pid_ki", 0.1),
+            pid_kd=m.get("pid_kd", 0.1),
+            router_hidden_dim=m.get("router_hidden_dim", None),
             spectral_max=m.get("spectral_max", 0.99),
             spectral_iters=m.get("spectral_iters", 5),
             tie_word_embeddings=m.get("tie_word_embeddings", True),
@@ -123,6 +133,11 @@ class ZAR1Model(nn.Module):
             spectral_iters=config.spectral_iters,
             lora_rank=config.lora_rank,
             use_lora=config.use_lora,
+            use_pid=config.use_pid,
+            pid_kp=config.pid_kp,
+            pid_ki=config.pid_ki,
+            pid_kd=config.pid_kd,
+            router_hidden_dim=config.router_hidden_dim,
         )
 
         self.act = ACTHalting(

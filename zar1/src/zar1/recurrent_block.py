@@ -238,6 +238,11 @@ class RecurrentTransformerBlock(nn.Module):
         spectral_iters: int = 5,
         lora_rank: int = 16,
         use_lora: bool = True,
+        use_pid: bool = True,
+        pid_kp: float = 0.5,
+        pid_ki: float = 0.1,
+        pid_kd: float = 0.1,
+        router_hidden_dim: int | None = None,
     ) -> None:
         super().__init__()
         self.dim = dim
@@ -250,7 +255,16 @@ class RecurrentTransformerBlock(nn.Module):
         self.norm1 = RMSNorm(dim)
         self.attn = GroupedQueryAttention(dim, num_heads, num_kv_heads, max_seq_len)
         self.norm2 = RMSNorm(dim)
-        self.moe = MoEFeedForward(dim, num_experts=num_experts, top_k=top_k)
+        self.moe = MoEFeedForward(
+            dim,
+            num_experts=num_experts,
+            top_k=top_k,
+            use_pid=use_pid,
+            pid_kp=pid_kp,
+            pid_ki=pid_ki,
+            pid_kd=pid_kd,
+            router_hidden_dim=router_hidden_dim,
+        )
 
         # Loop-index embedding table; one vector per recurrence step.
         self.loop_embed = nn.Embedding(max_loops, dim)
