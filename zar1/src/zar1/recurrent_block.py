@@ -243,6 +243,7 @@ class RecurrentTransformerBlock(nn.Module):
         pid_ki: float = 0.1,
         pid_kd: float = 0.1,
         router_hidden_dim: int | None = None,
+        use_lrs: bool = True,
     ) -> None:
         super().__init__()
         self.dim = dim
@@ -251,6 +252,7 @@ class RecurrentTransformerBlock(nn.Module):
         self.spectral_iters = spectral_iters
         self.use_lora = use_lora
         self.lora_rank = lora_rank
+        self.use_lrs = use_lrs
 
         self.norm1 = RMSNorm(dim)
         self.attn = GroupedQueryAttention(dim, num_heads, num_kv_heads, max_seq_len)
@@ -287,6 +289,14 @@ class RecurrentTransformerBlock(nn.Module):
         else:
             self.attn_loras = None
             self.ffn_loras = None
+
+        # Learned Residual Scaling (LRS): per-loop scaling factors for stability.
+        # Initializes to 1.0 (identity), learned during training to maintain
+        # stable signal propagation across recurrence depth.
+        if use_lrs:
+            self.lrs_scales = nn.Parameter(torch.ones(max_loops))
+        else:
+            self.lrs_scales = None
 
         # Cached left singular vector for power iteration (not a parameter).
         self.register_buffer(
@@ -341,4 +351,9 @@ class RecurrentTransformerBlock(nn.Module):
         if self.use_lora:
             ffn_out = ffn_out + self.ffn_loras[idx](ffn_in)
         h = h + ffn_out
+
+        # Apply learned residual scaling (LRS) for stability across loops.
+        if self.use_lrs:
+            h = h * self.lrs_scales[idx].unsqueeze(-1)
+
         return h, aux_loss

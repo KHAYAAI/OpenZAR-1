@@ -21,6 +21,7 @@ model:
   pid_ki: 0.1                    # Integral gain for PID controller
   pid_kd: 0.1                    # Derivative gain for PID controller
   router_hidden_dim: null        # MLP router hidden dimension (defaults to dim)
+  use_lrs: true                  # Enable learned residual scaling per loop
   pad_token_id: 0
   tie_word_embeddings: true
 

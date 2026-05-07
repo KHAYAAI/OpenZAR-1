@@ -24,6 +24,7 @@ model:
   pid_ki: 0.1
   pid_kd: 0.1
   router_hidden_dim: null        # MLP router hidden dimension
+  use_lrs: true                  # Enable learned residual scaling per loop
   pad_token_id: 0
   tie_word_embeddings: true
 

@@ -50,6 +50,7 @@ class ZAR1Config:
     pid_ki: float = 0.1
     pid_kd: float = 0.1
     router_hidden_dim: int | None = None
+    use_lrs: bool = True
     tie_word_embeddings: bool = True
     pad_token_id: int = 0
     extras: dict = field(default_factory=dict)
@@ -81,6 +82,7 @@ class ZAR1Config:
             pid_ki=m.get("pid_ki", 0.1),
             pid_kd=m.get("pid_kd", 0.1),
             router_hidden_dim=m.get("router_hidden_dim", None),
+            use_lrs=m.get("use_lrs", True),
             spectral_max=m.get("spectral_max", 0.99),
             spectral_iters=m.get("spectral_iters", 5),
             tie_word_embeddings=m.get("tie_word_embeddings", True),
@@ -138,6 +140,7 @@ class ZAR1Model(nn.Module):
             pid_ki=config.pid_ki,
             pid_kd=config.pid_kd,
             router_hidden_dim=config.router_hidden_dim,
+            use_lrs=config.use_lrs,
         )
 
         self.act = ACTHalting(

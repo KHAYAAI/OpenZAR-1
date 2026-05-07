@@ -206,3 +206,69 @@ def test_recurrent_block_pid_disabled():
     x = torch.randn(1, 8, 32)
     h, aux_loss = block(x, loop_index=0)
     assert h.shape == x.shape
+
+
+def test_lrs_scales_initialization():
+    """Test LRS (learned residual scaling) initializes to identity."""
+    block = RecurrentTransformerBlock(
+        dim=32, num_heads=2, num_kv_heads=1, max_loops=4, use_lrs=True
+    )
+    assert block.lrs_scales is not None
+    assert block.lrs_scales.shape == (4,)
+    # Should initialize to 1.0 (identity scaling)
+    assert torch.allclose(block.lrs_scales, torch.ones(4))
+
+
+def test_lrs_disabled():
+    """Test recurrent block with LRS disabled."""
+    block = RecurrentTransformerBlock(
+        dim=32, num_heads=2, num_kv_heads=1, max_loops=4, use_lrs=False
+    )
+    assert block.lrs_scales is None
+    x = torch.randn(1, 8, 32)
+    h, _ = block(x, loop_index=0)
+    assert h.shape == x.shape
+
+
+def test_lrs_scales_affect_output():
+    """Test that LRS scales affect hidden state magnitude."""
+    torch.manual_seed(42)
+    block = RecurrentTransformerBlock(
+        dim=32, num_heads=2, num_kv_heads=1, max_loops=2, use_lrs=True
+    )
+    x = torch.randn(1, 8, 32)
+
+    # Default: scales = 1.0
+    with torch.no_grad():
+        h_default, _ = block(x, loop_index=0)
+
+    # Modify scale to 0.5
+    with torch.no_grad():
+        block.lrs_scales[0] = 0.5
+        h_scaled, _ = block(x, loop_index=0)
+
+    # Output with 0.5 scale should be approximately 0.5x smaller in magnitude
+    # (not exact due to RMSNorm, but directionally correct)
+    assert torch.norm(h_scaled) < torch.norm(h_default)
+
+
+def test_lrs_per_loop():
+    """Test that different loop indices use different LRS scales."""
+    torch.manual_seed(0)
+    block = RecurrentTransformerBlock(
+        dim=32, num_heads=2, num_kv_heads=1, max_loops=4, use_lrs=True
+    )
+
+    # Set different scales per loop
+    with torch.no_grad():
+        block.lrs_scales.fill_(1.0)
+        block.lrs_scales[0] = 0.8
+        block.lrs_scales[1] = 1.2
+
+    x = torch.randn(1, 8, 32)
+    with torch.no_grad():
+        h0, _ = block(x, loop_index=0)
+        h1, _ = block(x, loop_index=1)
+
+    # Different scales should produce different output magnitudes
+    assert torch.norm(h0) != torch.norm(h1)
